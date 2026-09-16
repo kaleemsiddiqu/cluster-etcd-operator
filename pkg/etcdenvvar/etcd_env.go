@@ -331,6 +331,19 @@ func getCipherSuites(envVarContext envVarContext) (map[string]string, error) {
 		return nil, fmt.Errorf("couldn't get cipherSuites from observedConfig: %w", err)
 	}
 
+	observedMinTLSVersion, err := getObservedTLSMinVersion(envVarContext)
+	if err != nil {
+		return nil, fmt.Errorf("unable to compute the minimal TLS version: %v", err)
+	}
+
+	// TLS 1.3 profiles legitimately configure no cipher suites: etcd (and Go) do not
+	// allow selecting the cipher suites used by TLS 1.3. Fall back to the Modern
+	// profile's cipher suites so downstream consumers still have a value and the
+	// empty-list handling below does not incorrectly degrade the operator.
+	if observedMinTLSVersion == tlsutil.TLSVersion13 && len(observedCipherSuites) == 0 {
+		observedCipherSuites = crypto.OpenSSLToIANACipherSuites(v1.TLSProfiles[v1.TLSProfileModernType].Ciphers)
+	}
+
 	actualCipherSuites := tlshelpers.SupportedEtcdCiphers(observedCipherSuites)
 
 	if len(actualCipherSuites) == 0 {
@@ -356,15 +369,10 @@ func getCipherSuites(envVarContext envVarContext) (map[string]string, error) {
 		}
 	}
 
-	observedMinTLSVersion, err := getObservedTLSMinVersion(envVarContext)
-	if err != nil {
-		return nil, fmt.Errorf("unable to compute ETCD_CIPHER_SUITES: %v", err)
-	}
-
 	envName := "ETCD_CIPHER_SUITES"
 	if observedMinTLSVersion == tlsutil.TLSVersion13 {
-		// When --tls-min-version is set to 'TLS1.3', etcd does not allow --cipher-suites to also be specified.
-		// We still outout an env var for informational purposes.
+		// When --tls-min-version is set to 'TLS1.3', etcd does not allow --cipher-suites to
+		// also be specified. We still output an env var for informational purposes.
 		envName = "CIPHER_SUITES"
 	}
 
